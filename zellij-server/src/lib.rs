@@ -622,7 +622,11 @@ fn load_persistent_session_history() -> HashMap<ClientId, String> {
     use std::fs;
     use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
 
+    log::info!("=== LOADING SESSION HISTORY ===");
+    log::info!("Reading from: {:?}", &*ZELLIJ_SESSION_HISTORY_CACHE);
+
     if let Ok(contents) = fs::read_to_string(&*ZELLIJ_SESSION_HISTORY_CACHE) {
+        log::info!("File contents: {}", contents);
         // Parse simple format: "client_id: session_name" per line
         let mut history = HashMap::new();
         for line in contents.lines() {
@@ -632,8 +636,10 @@ fn load_persistent_session_history() -> HashMap<ClientId, String> {
                 }
             }
         }
+        log::info!("Parsed history: {:?}", history);
         history
     } else {
+        log::info!("Session history file does not exist or cannot be read");
         HashMap::new()
     }
 }
@@ -642,7 +648,19 @@ fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
     use std::fs;
     use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
 
+    log::info!(
+        "=== SAVING SESSION HISTORY: client_id={}, session_name={} ===",
+        client_id,
+        session_name
+    );
+    log::info!(
+        "Session history file path: {:?}",
+        &*ZELLIJ_SESSION_HISTORY_CACHE
+    );
+
     let mut history = load_persistent_session_history();
+    log::info!("Loaded existing history: {:?}", history);
+
     history.insert(client_id, session_name.to_string());
 
     // Write to file in simple format: "client_id: session_name" per line
@@ -652,13 +670,23 @@ fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
         .collect::<Vec<_>>()
         .join("\n");
 
+    log::info!("Writing session history content: {}", content);
+
     if let Err(e) = fs::write(&*ZELLIJ_SESSION_HISTORY_CACHE, content) {
         log::error!("Failed to write session history: {:?}", e);
+    } else {
+        log::info!("Successfully wrote session history to file");
     }
 }
 
 fn get_previous_session_from_file(client_id: ClientId) -> Option<String> {
-    load_persistent_session_history().get(&client_id).cloned()
+    log::info!(
+        "=== GET PREVIOUS SESSION FROM FILE: client_id={} ===",
+        client_id
+    );
+    let result = load_persistent_session_history().get(&client_id).cloned();
+    log::info!("Result: {:?}", result);
+    result
 }
 
 pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
@@ -1409,7 +1437,16 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                 );
             },
             ServerInstruction::SwitchSession(mut connect_to_session, client_id, completion_tx) => {
+                log::info!("=== SWITCH SESSION HANDLER ===");
+                log::info!(
+                    "client_id: {}, target_session: {:?}",
+                    client_id,
+                    connect_to_session.name
+                );
+
                 let current_session_name = envs::get_session_name();
+                log::info!("Current session name: {:?}", current_session_name);
+
                 if connect_to_session.name.as_deref()
                     == current_session_name.as_ref().ok().map(|s| s.as_str())
                 {
@@ -1417,12 +1454,21 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                 } else {
                     // Track the current session as the previous session for this client
                     if let Ok(current_name) = current_session_name.as_ref() {
+                        log::info!(
+                            "Setting previous session for client {}: {}",
+                            client_id,
+                            current_name
+                        );
                         session_state
                             .write()
                             .unwrap()
                             .set_previous_session(client_id, current_name.clone());
                         // Also save to persistent file for cross-session access
+                        log::info!("Calling save_persistent_session_history...");
                         save_persistent_session_history(client_id, current_name);
+                        log::info!("save_persistent_session_history completed");
+                    } else {
+                        log::warn!("Could not get current session name");
                     }
                     let layout_dir = session_data
                         .read()

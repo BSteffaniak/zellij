@@ -1554,17 +1554,42 @@ pub(crate) fn route_thread_main(
                                         {
                                             // Handle ToggleSession specially since it needs session_state
                                             if matches!(action, Action::ToggleSession) {
+                                                log::info!(
+                                                    "=== TOGGLE SESSION HANDLER (location 1) ==="
+                                                );
+                                                log::info!("client_id: {}", client_id);
+
                                                 let current_session = envs::get_session_name()
                                                     .unwrap_or_else(|_| String::new());
+                                                log::info!("Current session: {}", current_session);
+
                                                 // First check in-memory session_state, then fall back to persistent file
-                                                let previous_session = session_state
+                                                log::info!("Checking in-memory session state...");
+                                                let in_memory = session_state
                                                     .read()
                                                     .unwrap()
-                                                    .get_previous_session(client_id)
-                                                    .or_else(|| get_previous_session_from_persistent_history(client_id));
+                                                    .get_previous_session(client_id);
+                                                log::info!("In-memory result: {:?}", in_memory);
+
+                                                log::info!("Checking persistent file...");
+                                                let from_file =
+                                                    get_previous_session_from_persistent_history(
+                                                        client_id,
+                                                    );
+                                                log::info!("File result: {:?}", from_file);
+
+                                                let previous_session = in_memory.or(from_file);
+                                                log::info!(
+                                                    "Final previous_session: {:?}",
+                                                    previous_session
+                                                );
 
                                                 if let Some(previous_session) = previous_session {
                                                     if previous_session != current_session {
+                                                        log::info!(
+                                                            "Switching to previous session: {}",
+                                                            previous_session
+                                                        );
                                                         let connect_to_session = ConnectToSession {
                                                             name: Some(previous_session),
                                                             tab_position: None,
@@ -1580,7 +1605,14 @@ pub(crate) fn route_thread_main(
                                                             ))
                                                             .with_context(err_context)?;
                                                         should_break = true;
+                                                    } else {
+                                                        log::warn!("Previous session is same as current session, not switching");
                                                     }
+                                                } else {
+                                                    log::warn!(
+                                                        "No previous session found for client {}",
+                                                        client_id
+                                                    );
                                                 }
                                                 continue;
                                             }
@@ -1642,19 +1674,35 @@ pub(crate) fn route_thread_main(
 
                             // Handle ToggleSession specially since it needs session_state
                             if matches!(action, Action::ToggleSession) {
+                                log::info!("=== TOGGLE SESSION HANDLER (location 2) ===");
+                                log::info!("client_id: {}", client_id);
+
                                 let current_session =
                                     envs::get_session_name().unwrap_or_else(|_| String::new());
+                                log::info!("Current session: {}", current_session);
+
                                 // First check in-memory session_state, then fall back to persistent file
-                                let previous_session = session_state
+                                log::info!("Checking in-memory session state...");
+                                let in_memory = session_state
                                     .read()
                                     .unwrap()
-                                    .get_previous_session(client_id)
-                                    .or_else(|| {
-                                        get_previous_session_from_persistent_history(client_id)
-                                    });
+                                    .get_previous_session(client_id);
+                                log::info!("In-memory result: {:?}", in_memory);
+
+                                log::info!("Checking persistent file...");
+                                let from_file =
+                                    get_previous_session_from_persistent_history(client_id);
+                                log::info!("File result: {:?}", from_file);
+
+                                let previous_session = in_memory.or(from_file);
+                                log::info!("Final previous_session: {:?}", previous_session);
 
                                 if let Some(previous_session) = previous_session {
                                     if previous_session != current_session {
+                                        log::info!(
+                                            "Switching to previous session: {}",
+                                            previous_session
+                                        );
                                         let connect_to_session = ConnectToSession {
                                             name: Some(previous_session),
                                             tab_position: None,
@@ -1670,7 +1718,14 @@ pub(crate) fn route_thread_main(
                                             ))
                                             .with_context(err_context)?;
                                         should_break = true;
+                                    } else {
+                                        log::warn!("Previous session is same as current session, not switching");
                                     }
+                                } else {
+                                    log::warn!(
+                                        "No previous session found for client {}",
+                                        client_id
+                                    );
                                 }
                             } else if let Some(rlocked_sessions) = rlocked_sessions.as_ref() {
                                 if route_action(
