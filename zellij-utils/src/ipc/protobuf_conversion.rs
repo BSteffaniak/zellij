@@ -731,8 +731,8 @@ impl From<crate::input::actions::Action>
             TabNameInputAction, ToggleActiveSyncTabAction, ToggleFloatingPanesAction,
             ToggleFocusFullscreenAction, ToggleGroupMarkingAction, ToggleMouseModeAction,
             TogglePaneEmbedOrFloatingAction, TogglePaneFramesAction, TogglePaneInGroupAction,
-            TogglePanePinnedAction, ToggleTabAction, UndoRenamePaneAction, UndoRenameTabAction,
-            WriteAction, WriteCharsAction,
+            TogglePanePinnedAction, ToggleSessionAction, ToggleTabAction, UndoRenamePaneAction,
+            UndoRenameTabAction, WriteAction, WriteCharsAction,
         };
         use std::collections::HashMap;
 
@@ -966,6 +966,9 @@ impl From<crate::input::actions::Action>
                 ActionType::GoToTabName(GoToTabNameAction { name, create })
             },
             crate::input::actions::Action::ToggleTab => ActionType::ToggleTab(ToggleTabAction {}),
+            crate::input::actions::Action::ToggleSession => {
+                ActionType::ToggleSession(ToggleSessionAction {})
+            },
             crate::input::actions::Action::TabNameInput { input } => {
                 ActionType::TabNameInput(TabNameInputAction {
                     input: input.into_iter().map(|b| b as u32).collect(),
@@ -1502,6 +1505,7 @@ impl TryFrom<crate::client_server_contract::client_server_contract::Action>
                 })
             },
             ActionType::ToggleTab(_) => Ok(crate::input::actions::Action::ToggleTab),
+            ActionType::ToggleSession(_) => Ok(crate::input::actions::Action::ToggleSession),
             ActionType::TabNameInput(tab_name_action) => {
                 Ok(crate::input::actions::Action::TabNameInput {
                     input: tab_name_action.input.into_iter().map(|b| b as u8).collect(),

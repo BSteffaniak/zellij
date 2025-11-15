@@ -166,6 +166,11 @@ pub(crate) fn route_action(
                 ))
                 .with_context(err_context)?;
         },
+        Action::ToggleSession => {
+            // This is handled specially in route_thread_main before calling route_action
+            // since it needs access to session_state
+            drop(completion_tx);
+        },
         Action::Write {
             key_with_modifier,
             bytes: raw_bytes,
@@ -1526,6 +1531,36 @@ pub(crate) fn route_thread_main(
                                                 is_kitty_keyboard_protocol,
                                             )
                                         {
+                                            // Handle ToggleSession specially since it needs session_state
+                                            if matches!(action, Action::ToggleSession) {
+                                                let current_session = envs::get_session_name()
+                                                    .unwrap_or_else(|_| String::new());
+                                                if let Some(previous_session) = session_state
+                                                    .read()
+                                                    .unwrap()
+                                                    .get_previous_session(client_id)
+                                                {
+                                                    if previous_session != current_session {
+                                                        let connect_to_session = ConnectToSession {
+                                                            name: Some(previous_session),
+                                                            tab_position: None,
+                                                            pane_id: None,
+                                                            layout: None,
+                                                            cwd: None,
+                                                        };
+                                                        to_server
+                                                            .send(ServerInstruction::SwitchSession(
+                                                                connect_to_session,
+                                                                client_id,
+                                                                None,
+                                                            ))
+                                                            .with_context(err_context)?;
+                                                        should_break = true;
+                                                    }
+                                                }
+                                                continue;
+                                            }
+
                                             if route_action(
                                                 action,
                                                 client_id,
@@ -1580,7 +1615,35 @@ pub(crate) fn route_thread_main(
                             } else {
                                 maybe_client_id.unwrap_or(client_id)
                             };
-                            if let Some(rlocked_sessions) = rlocked_sessions.as_ref() {
+
+                            // Handle ToggleSession specially since it needs session_state
+                            if matches!(action, Action::ToggleSession) {
+                                let current_session =
+                                    envs::get_session_name().unwrap_or_else(|_| String::new());
+                                if let Some(previous_session) = session_state
+                                    .read()
+                                    .unwrap()
+                                    .get_previous_session(client_id)
+                                {
+                                    if previous_session != current_session {
+                                        let connect_to_session = ConnectToSession {
+                                            name: Some(previous_session),
+                                            tab_position: None,
+                                            pane_id: None,
+                                            layout: None,
+                                            cwd: None,
+                                        };
+                                        to_server
+                                            .send(ServerInstruction::SwitchSession(
+                                                connect_to_session,
+                                                client_id,
+                                                None,
+                                            ))
+                                            .with_context(err_context)?;
+                                        should_break = true;
+                                    }
+                                }
+                            } else if let Some(rlocked_sessions) = rlocked_sessions.as_ref() {
                                 if route_action(
                                     action,
                                     client_id,

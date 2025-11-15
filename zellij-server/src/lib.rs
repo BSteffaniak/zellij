@@ -477,6 +477,7 @@ pub(crate) struct SessionState {
     pipes: HashMap<String, ClientId>,                 // String => pipe_id
     watchers: HashSet<ClientId>,                      // watcher clients (read-only observers)
     last_active_client: Option<ClientId>,             // last client that sent a Key message
+    session_history: HashMap<ClientId, String>,       // track previous session per client
 }
 
 impl SessionState {
@@ -486,6 +487,7 @@ impl SessionState {
             pipes: HashMap::new(),
             watchers: HashSet::new(),
             last_active_client: None,
+            session_history: HashMap::new(),
         }
     }
     pub fn new_client(&mut self) -> ClientId {
@@ -514,6 +516,7 @@ impl SessionState {
         self.clients.remove(&client_id);
         self.pipes.retain(|_p_id, c_id| c_id != &client_id);
         self.clear_last_active_client(client_id);
+        self.remove_client_session_history(client_id);
     }
     pub fn set_client_size(&mut self, client_id: ClientId, size: Size) {
         self.clients
@@ -602,6 +605,15 @@ impl SessionState {
         if self.last_active_client == Some(client_id) {
             self.last_active_client = None;
         }
+    }
+    pub fn set_previous_session(&mut self, client_id: ClientId, session_name: String) {
+        self.session_history.insert(client_id, session_name);
+    }
+    pub fn get_previous_session(&self, client_id: ClientId) -> Option<String> {
+        self.session_history.get(&client_id).cloned()
+    }
+    pub fn remove_client_session_history(&mut self, client_id: ClientId) {
+        self.session_history.remove(&client_id);
     }
 }
 
@@ -1354,9 +1366,18 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
             },
             ServerInstruction::SwitchSession(mut connect_to_session, client_id, completion_tx) => {
                 let current_session_name = envs::get_session_name();
-                if connect_to_session.name == current_session_name.ok() {
+                if connect_to_session.name.as_deref()
+                    == current_session_name.as_ref().ok().map(|s| s.as_str())
+                {
                     log::error!("Cannot attach to same session");
                 } else {
+                    // Track the current session as the previous session for this client
+                    if let Ok(current_name) = current_session_name.as_ref() {
+                        session_state
+                            .write()
+                            .unwrap()
+                            .set_previous_session(client_id, current_name.clone());
+                    }
                     let layout_dir = session_data
                         .read()
                         .unwrap()

@@ -229,6 +229,7 @@ message Action {
     ToggleGroupMarkingAction toggle_group_marking = 91;
     SwitchSessionAction switch_session = 92;
     NewBlockingPaneAction new_blocking_pane = 93;
+    ToggleSessionAction toggle_session = 94;
   }
 }
 
@@ -265,6 +266,7 @@ message CloseTabAction {}
 message ToggleTabAction {}
 message UndoRenameTabAction {}
 message DetachAction {}
+message ToggleSessionAction {}
 message CopyAction {}
 message ConfirmAction {}
 message DenyAction {}

@@ -68,6 +68,7 @@ macro_rules! parse_kdl_action_arguments {
                 "GoToPreviousTab" => Ok(Action::GoToPreviousTab),
                 "CloseTab" => Ok(Action::CloseTab),
                 "ToggleTab" => Ok(Action::ToggleTab),
+                "ToggleSession" => Ok(Action::ToggleSession),
                 "UndoRenameTab" => Ok(Action::UndoRenameTab),
                 "Detach" => Ok(Action::Detach),
                 "Copy" => Ok(Action::Copy),
@@ -777,6 +778,7 @@ impl Action {
                 Some(node)
             },
             Action::ToggleTab => Some(KdlNode::new("ToggleTab")),
+            Action::ToggleSession => Some(KdlNode::new("ToggleSession")),
             Action::TabNameInput { input: bytes } => {
                 let mut node = KdlNode::new("TabNameInput");
                 for byte in bytes {
@@ -1488,6 +1490,9 @@ impl TryFrom<(&KdlNode, &Options)> for Action {
             },
             "CloseTab" => parse_kdl_action_arguments!(action_name, action_arguments, kdl_action),
             "ToggleTab" => parse_kdl_action_arguments!(action_name, action_arguments, kdl_action),
+            "ToggleSession" => {
+                parse_kdl_action_arguments!(action_name, action_arguments, kdl_action)
+            },
             "UndoRenameTab" => {
                 parse_kdl_action_arguments!(action_name, action_arguments, kdl_action)
             },

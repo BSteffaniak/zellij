@@ -1390,7 +1390,8 @@ impl TryFrom<Action> for ProtobufAction {
             }
             | Action::SkipConfirm { action: _ }
             | Action::NewBlockingPane { .. }
-            | Action::SwitchSession { .. } => Err("Unsupported action"),
+            | Action::SwitchSession { .. }
+            | Action::ToggleSession => Err("Unsupported action"),
         }
     }
 }

@@ -282,6 +282,8 @@ pub enum Action {
         layout: Option<LayoutInfo>,
         cwd: Option<PathBuf>,
     },
+    /// Toggle between current and previous session
+    ToggleSession,
     LaunchOrFocusPlugin {
         plugin: RunPluginOrAlias,
         should_float: bool,
