@@ -48,6 +48,10 @@ pub fn create_config_and_cache_folders() {
     if let Err(e) = std::fs::create_dir_all(&ZELLIJ_SESSION_INFO_CACHE_DIR.as_path()) {
         log::error!("Failed to create session_info cache dir: {:?}", e);
     }
+    // Create version-specific cache directory for stdin_cache and seen_release_notes
+    if let Err(e) = std::fs::create_dir_all(&ZELLIJ_CACHE_DIR.join(VERSION).as_path()) {
+        log::error!("Failed to create version cache dir: {:?}", e);
+    }
 }
 
 const fn system_default_data_dir() -> &'static str {
