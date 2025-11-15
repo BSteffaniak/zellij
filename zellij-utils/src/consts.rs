@@ -73,6 +73,8 @@ lazy_static! {
     pub static ref ZELLIJ_SESSION_INFO_CACHE_DIR: PathBuf = ZELLIJ_CACHE_DIR
         .join(CLIENT_SERVER_CONTRACT_DIR.clone())
         .join("session_info");
+    pub static ref ZELLIJ_SESSION_HISTORY_CACHE: PathBuf =
+        ZELLIJ_CACHE_DIR.join("session_history.kdl");
     pub static ref ZELLIJ_STDIN_CACHE_FILE: PathBuf =
         ZELLIJ_CACHE_DIR.join(VERSION).join("stdin_cache");
     pub static ref ZELLIJ_PLUGIN_ARTIFACT_DIR: PathBuf = ZELLIJ_CACHE_DIR.join(VERSION);

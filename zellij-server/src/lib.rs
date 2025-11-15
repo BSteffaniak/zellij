@@ -617,6 +617,50 @@ impl SessionState {
     }
 }
 
+// Persistent session history helpers - these work across all Zellij sessions
+fn load_persistent_session_history() -> HashMap<ClientId, String> {
+    use std::fs;
+    use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
+
+    if let Ok(contents) = fs::read_to_string(&*ZELLIJ_SESSION_HISTORY_CACHE) {
+        // Parse simple format: "client_id: session_name" per line
+        let mut history = HashMap::new();
+        for line in contents.lines() {
+            if let Some((client_str, session)) = line.split_once(": ") {
+                if let Ok(client_id) = client_str.parse::<ClientId>() {
+                    history.insert(client_id, session.to_string());
+                }
+            }
+        }
+        history
+    } else {
+        HashMap::new()
+    }
+}
+
+fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
+    use std::fs;
+    use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
+
+    let mut history = load_persistent_session_history();
+    history.insert(client_id, session_name.to_string());
+
+    // Write to file in simple format: "client_id: session_name" per line
+    let content: String = history
+        .iter()
+        .map(|(id, name)| format!("{}: {}", id, name))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if let Err(e) = fs::write(&*ZELLIJ_SESSION_HISTORY_CACHE, content) {
+        log::error!("Failed to write session history: {:?}", e);
+    }
+}
+
+fn get_previous_session_from_file(client_id: ClientId) -> Option<String> {
+    load_persistent_session_history().get(&client_id).cloned()
+}
+
 pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
     info!("Starting Zellij server!");
 
@@ -1377,6 +1421,8 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                             .write()
                             .unwrap()
                             .set_previous_session(client_id, current_name.clone());
+                        // Also save to persistent file for cross-session access
+                        save_persistent_session_history(client_id, current_name);
                     }
                     let layout_dir = session_data
                         .read()

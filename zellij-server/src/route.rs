@@ -1437,6 +1437,27 @@ macro_rules! send_to_screen_or_retry_queue {
     }};
 }
 
+// Load persistent session history from file (works across all Zellij sessions)
+fn get_previous_session_from_persistent_history(client_id: ClientId) -> Option<String> {
+    use std::collections::HashMap;
+    use std::fs;
+    use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
+
+    if let Ok(contents) = fs::read_to_string(&*ZELLIJ_SESSION_HISTORY_CACHE) {
+        let mut history = HashMap::new();
+        for line in contents.lines() {
+            if let Some((client_str, session)) = line.split_once(": ") {
+                if let Ok(cid) = client_str.parse::<ClientId>() {
+                    history.insert(cid, session.to_string());
+                }
+            }
+        }
+        history.get(&client_id).cloned()
+    } else {
+        None
+    }
+}
+
 pub(crate) fn route_thread_main(
     session_data: Arc<RwLock<Option<SessionMetaData>>>,
     session_state: Arc<RwLock<SessionState>>,
@@ -1535,11 +1556,14 @@ pub(crate) fn route_thread_main(
                                             if matches!(action, Action::ToggleSession) {
                                                 let current_session = envs::get_session_name()
                                                     .unwrap_or_else(|_| String::new());
-                                                if let Some(previous_session) = session_state
+                                                // First check in-memory session_state, then fall back to persistent file
+                                                let previous_session = session_state
                                                     .read()
                                                     .unwrap()
                                                     .get_previous_session(client_id)
-                                                {
+                                                    .or_else(|| get_previous_session_from_persistent_history(client_id));
+
+                                                if let Some(previous_session) = previous_session {
                                                     if previous_session != current_session {
                                                         let connect_to_session = ConnectToSession {
                                                             name: Some(previous_session),
@@ -1620,11 +1644,16 @@ pub(crate) fn route_thread_main(
                             if matches!(action, Action::ToggleSession) {
                                 let current_session =
                                     envs::get_session_name().unwrap_or_else(|_| String::new());
-                                if let Some(previous_session) = session_state
+                                // First check in-memory session_state, then fall back to persistent file
+                                let previous_session = session_state
                                     .read()
                                     .unwrap()
                                     .get_previous_session(client_id)
-                                {
+                                    .or_else(|| {
+                                        get_previous_session_from_persistent_history(client_id)
+                                    });
+
+                                if let Some(previous_session) = previous_session {
                                     if previous_session != current_session {
                                         let connect_to_session = ConnectToSession {
                                             name: Some(previous_session),
