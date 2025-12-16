@@ -222,6 +222,11 @@ impl Pane for PluginPane {
     fn handle_plugin_bytes(&mut self, client_id: ClientId, bytes: VteBytes) {
         self.set_client_should_render(client_id, true);
 
+        // Mark loading as ended - real plugin content has arrived
+        // This prevents pending ProgressPluginLoadingOffset messages from
+        // overwriting the actual content with the loading indicator
+        self.loading_indication.ended = true;
+
         let mut vte_bytes = bytes;
         if let Some(plugin_permission) = &self.requesting_permissions {
             vte_bytes = self
@@ -731,6 +736,8 @@ impl Pane for PluginPane {
         );
     }
     fn start_loading_indication(&mut self, loading_indication: LoadingIndication) {
+        // Reset ended flag so loading animation can show
+        self.loading_indication.ended = false;
         self.loading_indication.merge(loading_indication);
         self.handle_plugin_bytes_for_all_clients(
             self.loading_indication.to_string().as_bytes().to_vec(),
