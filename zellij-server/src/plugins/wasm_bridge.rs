@@ -379,6 +379,16 @@ impl WasmBridge {
                                             plugin_id,
                                             plugin_list,
                                         );
+                                        // First apply any cached events that arrived while loading
+                                        let _ =
+                                            senders.send_to_plugin(PluginInstruction::ApplyCachedEvents {
+                                                plugin_ids: vec![plugin_id],
+                                                done_receiving_permissions: false,
+                                            });
+                                        // Then request fresh state - ensures plugin gets latest state
+                                        // even if it arrived during loading and got lost in race
+                                        let _ = senders
+                                            .send_to_screen(ScreenInstruction::RequestStateUpdateForPlugins);
                                     },
                                     Err(e) => handle_plugin_loading_failure(
                                         &senders,
@@ -388,12 +398,6 @@ impl WasmBridge {
                                         Some(client_id),
                                     ),
                                 }
-
-                                let _ =
-                                    senders.send_to_plugin(PluginInstruction::ApplyCachedEvents {
-                                        plugin_ids: vec![plugin_id],
-                                        done_receiving_permissions: false,
-                                    });
                             },
                         );
                     });
@@ -430,6 +434,15 @@ impl WasmBridge {
                                         plugin_id,
                                         plugin_list,
                                     );
+                                    // First apply any cached events that arrived while loading
+                                    let _ = senders.send_to_plugin(PluginInstruction::ApplyCachedEvents {
+                                        plugin_ids: vec![plugin_id],
+                                        done_receiving_permissions: false,
+                                    });
+                                    // Then request fresh state - ensures plugin gets latest state
+                                    // even if it arrived during loading and got lost in race
+                                    let _ = senders
+                                        .send_to_screen(ScreenInstruction::RequestStateUpdateForPlugins);
                                 },
                                 Err(e) => handle_plugin_loading_failure(
                                     &senders,
@@ -439,11 +452,6 @@ impl WasmBridge {
                                     Some(client_id),
                                 ),
                             }
-
-                            let _ = senders.send_to_plugin(PluginInstruction::ApplyCachedEvents {
-                                plugin_ids: vec![plugin_id],
-                                done_receiving_permissions: false,
-                            });
                         },
                     );
                 }
@@ -737,15 +745,19 @@ impl WasmBridge {
                     .start_plugin()
                     {
                         Ok(_) => {
-                            let _ = senders
-                                .send_to_screen(ScreenInstruction::RequestStateUpdateForPlugins);
                             let _ = senders.send_to_background_jobs(
                                 BackgroundJob::StopPluginLoadingAnimation(plugin_id),
                             );
+                            // First apply any cached events that arrived while loading
                             let _ = senders.send_to_plugin(PluginInstruction::ApplyCachedEvents {
                                 plugin_ids: vec![plugin_id],
                                 done_receiving_permissions: false,
                             });
+                            // Then request fresh state updates - this ensures the plugin gets
+                            // the latest ModeUpdate, TabUpdate, etc. even if they arrived during
+                            // the loading process and got lost in the race condition
+                            let _ = senders
+                                .send_to_screen(ScreenInstruction::RequestStateUpdateForPlugins);
                         },
                         Err(e) => {
                             log::error!("Failed to load plugin for new client: {}", e);
@@ -1233,6 +1245,12 @@ impl WasmBridge {
         if let Some(ref mut prev_report) = self.previous_pane_render_report {
             prev_report.all_pane_contents.remove(&client_id);
         }
+
+        // Clean up any pending plugin loading state for this client
+        // This prevents issues when a client rapidly disconnects/reconnects
+        // Note: loading_plugins contains (PluginId, RunPlugin) pairs that are being loaded
+        // We don't need to clean them up here since they're not client-specific
+        // The cached_events will be drained when ApplyCachedEvents runs
     }
 
     fn get_changed_panes_per_client(
@@ -1850,7 +1868,10 @@ fn handle_plugin_successful_loading(
     plugin_list: BTreeMap<PluginId, RunPlugin>,
 ) {
     let _ = senders.send_to_background_jobs(BackgroundJob::StopPluginLoadingAnimation(plugin_id));
-    let _ = senders.send_to_screen(ScreenInstruction::RequestStateUpdateForPlugins);
+    // Note: RequestStateUpdateForPlugins is intentionally NOT sent here.
+    // It should be sent AFTER ApplyCachedEvents to avoid race conditions where
+    // ModeUpdate events get cached and then lost.
+    // The caller should send ApplyCachedEvents first, then RequestStateUpdateForPlugins.
     let _ = senders.send_to_background_jobs(BackgroundJob::ReportPluginList(plugin_list));
 }
 

@@ -393,6 +393,7 @@ pub enum ScreenContext {
     RemoveWatcherClient,
     SetFollowedClient,
     WatcherTerminalResize, // NEW
+    GetClientPosition,
 }
 
 /// Stack call representations corresponding to the different types of [`PtyInstruction`]s.

@@ -472,6 +472,12 @@ pub enum ScreenInstruction {
     RemoveWatcherClient(ClientId),
     SetFollowedClient(ClientId),
     WatcherTerminalResize(ClientId, Size),
+    /// Query the current position (tab, pane) for a client
+    /// Returns (tab_position, pane_id, is_plugin) via the response channel
+    GetClientPosition {
+        client_id: ClientId,
+        response_channel: crossbeam::channel::Sender<Option<(usize, Option<u32>, Option<bool>)>>,
+    },
 }
 
 impl From<&ScreenInstruction> for ScreenContext {
@@ -712,6 +718,7 @@ impl From<&ScreenInstruction> for ScreenContext {
             ScreenInstruction::RemoveWatcherClient(..) => ScreenContext::RemoveWatcherClient,
             ScreenInstruction::SetFollowedClient(..) => ScreenContext::SetFollowedClient,
             ScreenInstruction::WatcherTerminalResize(..) => ScreenContext::WatcherTerminalResize, // NEW
+            ScreenInstruction::GetClientPosition { .. } => ScreenContext::GetClientPosition,
         }
     }
 }
@@ -1613,6 +1620,26 @@ impl Screen {
 
     pub fn get_first_client_id(&self) -> Option<ClientId> {
         self.active_tab_indices.keys().next().copied()
+    }
+
+    /// Returns the client's current position: (tab_position, pane_id, is_plugin)
+    /// tab_position is 1-indexed (matches user-facing tab numbers)
+    pub fn get_client_position(
+        &self,
+        client_id: ClientId,
+    ) -> Option<(usize, Option<u32>, Option<bool>)> {
+        let tab_index = self.active_tab_indices.get(&client_id)?;
+        let tab = self.tabs.get(tab_index)?;
+        let tab_position = tab.position; // 1-indexed position
+
+        // Get the active pane for this client
+        let (pane_id, is_plugin) = match tab.get_active_pane_id(client_id) {
+            Some(PaneId::Terminal(id)) => (Some(id), Some(false)),
+            Some(PaneId::Plugin(id)) => (Some(id), Some(true)),
+            None => (None, None),
+        };
+
+        Some((tab_position, pane_id, is_plugin))
     }
 
     /// Returns an immutable reference to this [`Screen`]'s previous active [`Tab`].
@@ -6235,6 +6262,13 @@ pub(crate) fn screen_thread_main(
                 // NEW
                 screen.set_watcher_size(client_id, size);
                 screen.render(None)?;
+            },
+            ScreenInstruction::GetClientPosition {
+                client_id,
+                response_channel,
+            } => {
+                let position = screen.get_client_position(client_id);
+                let _ = response_channel.send(position);
             },
         }
     }

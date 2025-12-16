@@ -471,13 +471,23 @@ macro_rules! send_to_client {
     };
 }
 
+/// Stores the session state (tab, pane) for a client when they switch sessions
+/// This allows restoring their exact position when toggling back
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SessionHistoryEntry {
+    pub session_name: String,
+    pub tab_position: Option<usize>,
+    pub pane_id: Option<u32>,
+    pub is_plugin: Option<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SessionState {
     clients: HashMap<ClientId, Option<(Size, bool)>>, // bool -> is_web_client
     pipes: HashMap<String, ClientId>,                 // String => pipe_id
     watchers: HashSet<ClientId>,                      // watcher clients (read-only observers)
     last_active_client: Option<ClientId>,             // last client that sent a Key message
-    session_history: HashMap<ClientId, String>,       // track previous session per client
+    session_history: HashMap<ClientId, SessionHistoryEntry>, // track previous session per client with position
 }
 
 impl SessionState {
@@ -606,19 +616,44 @@ impl SessionState {
             self.last_active_client = None;
         }
     }
-    pub fn set_previous_session(&mut self, client_id: ClientId, session_name: String) {
-        self.session_history.insert(client_id, session_name);
+    pub fn set_previous_session(
+        &mut self,
+        client_id: ClientId,
+        session_name: String,
+        tab_position: Option<usize>,
+        pane_id: Option<u32>,
+        is_plugin: Option<bool>,
+    ) {
+        self.session_history.insert(
+            client_id,
+            SessionHistoryEntry {
+                session_name,
+                tab_position,
+                pane_id,
+                is_plugin,
+            },
+        );
     }
-    pub fn get_previous_session(&self, client_id: ClientId) -> Option<String> {
-        self.session_history.get(&client_id).cloned()
+    pub fn get_previous_session(&self, client_id: ClientId) -> Option<&SessionHistoryEntry> {
+        self.session_history.get(&client_id)
     }
     pub fn remove_client_session_history(&mut self, client_id: ClientId) {
         self.session_history.remove(&client_id);
     }
 }
 
+/// Entry stored in the persistent session history file (JSON format)
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct PersistentHistoryEntry {
+    client_id: ClientId,
+    session_name: String,
+    tab_position: Option<usize>,
+    pane_id: Option<u32>,
+    is_plugin: Option<bool>,
+}
+
 // Persistent session history helpers - these work across all Zellij sessions
-fn load_persistent_session_history() -> HashMap<ClientId, String> {
+fn load_persistent_session_history() -> HashMap<ClientId, SessionHistoryEntry> {
     use std::fs;
     use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
 
@@ -627,13 +662,27 @@ fn load_persistent_session_history() -> HashMap<ClientId, String> {
 
     if let Ok(contents) = fs::read_to_string(&*ZELLIJ_SESSION_HISTORY_CACHE) {
         log::info!("File contents: {}", contents);
-        // Parse simple format: "client_id: session_name" per line
+        // Parse JSON format: one JSON object per line
         let mut history = HashMap::new();
         for line in contents.lines() {
-            if let Some((client_str, session)) = line.split_once(": ") {
-                if let Ok(client_id) = client_str.parse::<ClientId>() {
-                    history.insert(client_id, session.to_string());
-                }
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<PersistentHistoryEntry>(line) {
+                Ok(entry) => {
+                    history.insert(
+                        entry.client_id,
+                        SessionHistoryEntry {
+                            session_name: entry.session_name,
+                            tab_position: entry.tab_position,
+                            pane_id: entry.pane_id,
+                            is_plugin: entry.is_plugin,
+                        },
+                    );
+                },
+                Err(e) => {
+                    log::warn!("Failed to parse session history line: {} - {}", line, e);
+                },
             }
         }
         log::info!("Parsed history: {:?}", history);
@@ -644,14 +693,23 @@ fn load_persistent_session_history() -> HashMap<ClientId, String> {
     }
 }
 
-fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
+fn save_persistent_session_history(
+    client_id: ClientId,
+    session_name: &str,
+    tab_position: Option<usize>,
+    pane_id: Option<u32>,
+    is_plugin: Option<bool>,
+) {
     use std::fs;
     use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
 
     log::info!(
-        "=== SAVING SESSION HISTORY: client_id={}, session_name={} ===",
+        "=== SAVING SESSION HISTORY: client_id={}, session_name={}, tab={:?}, pane={:?}, is_plugin={:?} ===",
         client_id,
-        session_name
+        session_name,
+        tab_position,
+        pane_id,
+        is_plugin
     );
     log::info!(
         "Session history file path: {:?}",
@@ -661,12 +719,29 @@ fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
     let mut history = load_persistent_session_history();
     log::info!("Loaded existing history: {:?}", history);
 
-    history.insert(client_id, session_name.to_string());
+    history.insert(
+        client_id,
+        SessionHistoryEntry {
+            session_name: session_name.to_string(),
+            tab_position,
+            pane_id,
+            is_plugin,
+        },
+    );
 
-    // Write to file in simple format: "client_id: session_name" per line
+    // Write to file in JSON format: one JSON object per line
     let content: String = history
         .iter()
-        .map(|(id, name)| format!("{}: {}", id, name))
+        .filter_map(|(id, entry)| {
+            let persistent_entry = PersistentHistoryEntry {
+                client_id: *id,
+                session_name: entry.session_name.clone(),
+                tab_position: entry.tab_position,
+                pane_id: entry.pane_id,
+                is_plugin: entry.is_plugin,
+            };
+            serde_json::to_string(&persistent_entry).ok()
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -677,16 +752,6 @@ fn save_persistent_session_history(client_id: ClientId, session_name: &str) {
     } else {
         log::info!("Successfully wrote session history to file");
     }
-}
-
-fn get_previous_session_from_file(client_id: ClientId) -> Option<String> {
-    log::info!(
-        "=== GET PREVIOUS SESSION FROM FILE: client_id={} ===",
-        client_id
-    );
-    let result = load_persistent_session_history().get(&client_id).cloned();
-    log::info!("Result: {:?}", result);
-    result
 }
 
 pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
@@ -1453,19 +1518,51 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                     log::error!("Cannot attach to same session");
                 } else {
                     // Track the current session as the previous session for this client
+                    // First, query the screen for the client's current position
+                    let (tab_position, pane_id, is_plugin) = {
+                        let (response_tx, response_rx) = crossbeam::channel::bounded(1);
+                        if let Some(ref session_data) = *session_data.read().unwrap() {
+                            let _ = session_data
+                                .senders
+                                .send_to_screen(ScreenInstruction::GetClientPosition {
+                                    client_id,
+                                    response_channel: response_tx,
+                                });
+                            // Wait for response with a timeout
+                            match response_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                                Ok(Some((tab, pane, is_plug))) => (Some(tab), pane, is_plug),
+                                _ => (None, None, None),
+                            }
+                        } else {
+                            (None, None, None)
+                        }
+                    };
+
                     if let Ok(current_name) = current_session_name.as_ref() {
                         log::info!(
-                            "Setting previous session for client {}: {}",
+                            "Setting previous session for client {}: {} (tab={:?}, pane={:?}, is_plugin={:?})",
                             client_id,
-                            current_name
+                            current_name,
+                            tab_position,
+                            pane_id,
+                            is_plugin
                         );
-                        session_state
-                            .write()
-                            .unwrap()
-                            .set_previous_session(client_id, current_name.clone());
+                        session_state.write().unwrap().set_previous_session(
+                            client_id,
+                            current_name.clone(),
+                            tab_position,
+                            pane_id,
+                            is_plugin,
+                        );
                         // Also save to persistent file for cross-session access
                         log::info!("Calling save_persistent_session_history...");
-                        save_persistent_session_history(client_id, current_name);
+                        save_persistent_session_history(
+                            client_id,
+                            current_name,
+                            tab_position,
+                            pane_id,
+                            is_plugin,
+                        );
                         log::info!("save_persistent_session_history completed");
                     } else {
                         log::warn!("Could not get current session name");

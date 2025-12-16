@@ -10,7 +10,7 @@ use crate::{
     plugins::PluginInstruction,
     pty::{ClientTabIndexOrPaneId, PtyInstruction},
     screen::ScreenInstruction,
-    ServerInstruction, SessionMetaData, SessionState,
+    ServerInstruction, SessionHistoryEntry, SessionMetaData, SessionState,
 };
 use std::thread;
 use std::time::Duration;
@@ -1437,18 +1437,51 @@ macro_rules! send_to_screen_or_retry_queue {
     }};
 }
 
+/// Entry stored in the persistent session history file (JSON format)
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct PersistentHistoryEntry {
+    client_id: ClientId,
+    session_name: String,
+    tab_position: Option<usize>,
+    pane_id: Option<u32>,
+    is_plugin: Option<bool>,
+}
+
 // Load persistent session history from file (works across all Zellij sessions)
-fn get_previous_session_from_persistent_history(client_id: ClientId) -> Option<String> {
+fn get_previous_session_from_persistent_history(client_id: ClientId) -> Option<SessionHistoryEntry> {
     use std::collections::HashMap;
     use std::fs;
     use zellij_utils::consts::ZELLIJ_SESSION_HISTORY_CACHE;
 
     if let Ok(contents) = fs::read_to_string(&*ZELLIJ_SESSION_HISTORY_CACHE) {
-        let mut history = HashMap::new();
+        let mut history: HashMap<ClientId, SessionHistoryEntry> = HashMap::new();
         for line in contents.lines() {
-            if let Some((client_str, session)) = line.split_once(": ") {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // Try JSON format first (new format)
+            if let Ok(entry) = serde_json::from_str::<PersistentHistoryEntry>(line) {
+                history.insert(
+                    entry.client_id,
+                    SessionHistoryEntry {
+                        session_name: entry.session_name,
+                        tab_position: entry.tab_position,
+                        pane_id: entry.pane_id,
+                        is_plugin: entry.is_plugin,
+                    },
+                );
+            } else if let Some((client_str, session)) = line.split_once(": ") {
+                // Fall back to old format for backwards compatibility
                 if let Ok(cid) = client_str.parse::<ClientId>() {
-                    history.insert(cid, session.to_string());
+                    history.insert(
+                        cid,
+                        SessionHistoryEntry {
+                            session_name: session.to_string(),
+                            tab_position: None,
+                            pane_id: None,
+                            is_plugin: None,
+                        },
+                    );
                 }
             }
         }
@@ -1568,7 +1601,8 @@ pub(crate) fn route_thread_main(
                                                 let in_memory = session_state
                                                     .read()
                                                     .unwrap()
-                                                    .get_previous_session(client_id);
+                                                    .get_previous_session(client_id)
+                                                    .cloned();
                                                 log::info!("In-memory result: {:?}", in_memory);
 
                                                 log::info!("Checking persistent file...");
@@ -1584,16 +1618,18 @@ pub(crate) fn route_thread_main(
                                                     previous_session
                                                 );
 
-                                                if let Some(previous_session) = previous_session {
-                                                    if previous_session != current_session {
+                                                if let Some(previous_entry) = previous_session {
+                                                    if previous_entry.session_name != current_session {
                                                         log::info!(
                                                             "Switching to previous session: {}",
-                                                            previous_session
+                                                            previous_entry.session_name
                                                         );
                                                         let connect_to_session = ConnectToSession {
-                                                            name: Some(previous_session),
-                                                            tab_position: None,
-                                                            pane_id: None,
+                                                            name: Some(previous_entry.session_name),
+                                                            tab_position: previous_entry.tab_position,
+                                                            pane_id: previous_entry.pane_id.map(|id| {
+                                                                (id, previous_entry.is_plugin.unwrap_or(false))
+                                                            }),
                                                             layout: None,
                                                             cwd: None,
                                                         };
@@ -1686,7 +1722,8 @@ pub(crate) fn route_thread_main(
                                 let in_memory = session_state
                                     .read()
                                     .unwrap()
-                                    .get_previous_session(client_id);
+                                    .get_previous_session(client_id)
+                                    .cloned();
                                 log::info!("In-memory result: {:?}", in_memory);
 
                                 log::info!("Checking persistent file...");
@@ -1697,16 +1734,18 @@ pub(crate) fn route_thread_main(
                                 let previous_session = in_memory.or(from_file);
                                 log::info!("Final previous_session: {:?}", previous_session);
 
-                                if let Some(previous_session) = previous_session {
-                                    if previous_session != current_session {
+                                if let Some(previous_entry) = previous_session {
+                                    if previous_entry.session_name != current_session {
                                         log::info!(
                                             "Switching to previous session: {}",
-                                            previous_session
+                                            previous_entry.session_name
                                         );
                                         let connect_to_session = ConnectToSession {
-                                            name: Some(previous_session),
-                                            tab_position: None,
-                                            pane_id: None,
+                                            name: Some(previous_entry.session_name),
+                                            tab_position: previous_entry.tab_position,
+                                            pane_id: previous_entry.pane_id.map(|id| {
+                                                (id, previous_entry.is_plugin.unwrap_or(false))
+                                            }),
                                             layout: None,
                                             cwd: None,
                                         };
